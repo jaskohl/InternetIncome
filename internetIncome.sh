@@ -563,9 +563,12 @@ start_containers() {
     mkdir -p "$SCRIPT_CWD/$bitping_data_folder/data$i/.bitpingd"
     sudo chmod -R 777 "$SCRIPT_CWD/$bitping_data_folder/data$i/.bitpingd"
     if [ ! -f "$SCRIPT_CWD/$bitping_data_folder/data$i/.bitpingd/node.db" ]; then
-        sudo docker run --rm $NETWORK_TUN -v "$LOCAL_HOST_DNS_RESOLVER_FILE:/etc/resolv.conf:ro" -v "$SCRIPT_CWD/$bitping_data_folder/data$i/.bitpingd:/root/.bitpingd" -w /app --entrypoint /app/bitpingd bitping/bitpingd:latest login --email $BITPING_EMAIL --password $BITPING_PASSWORD
+        MSYS_NO_PATHCONV=1 sudo docker run --rm $NETWORK_TUN -v "$LOCAL_HOST_DNS_RESOLVER_FILE:/etc/resolv.conf:ro" -v "$SCRIPT_CWD/$bitping_data_folder/data$i/.bitpingd:/root/.bitpingd" --entrypoint /app/bitpingd bitping/bitpingd:latest login --email $BITPING_EMAIL --password $BITPING_PASSWORD
     fi
-    if CONTAINER_ID=$(sudo docker run -d --name bitping$UNIQUE_ID$i --restart=always $NETWORK_TUN $LOGS_PARAM -v "$LOCAL_HOST_DNS_RESOLVER_FILE:/etc/resolv.conf:ro" -v "$SCRIPT_CWD/$bitping_data_folder/data$i/.bitpingd:/root/.bitpingd" -w /app --entrypoint /app/bitpingd bitping/bitpingd:latest); then
+    # echo "Running Bitping diagnostics (no -w flag) for container bitping$UNIQUE_ID$i..."
+    # sudo docker run --rm --name bitping_diag_no_w$UNIQUE_ID$i $NETWORK_TUN $LOGS_PARAM -v "$LOCAL_HOST_DNS_RESOLVER_FILE:/etc/resolv.conf:ro" -v "$SCRIPT_CWD/$bitping_data_folder/data$i/.bitpingd:/root/.bitpingd" --entrypoint sh bitping/bitpingd:latest -c "echo '--- Diagnostic Info (No -w flag) Start ---'; echo 'Current PWD:'; pwd; echo 'Environment Variables:'; env; echo '--- Diagnostic Info (No -w flag) End ---'"
+    # The original command is commented out below for reference and easy restoration
+    if CONTAINER_ID=$(MSYS_NO_PATHCONV=1 sudo docker run -d --name bitping$UNIQUE_ID$i --restart=always $NETWORK_TUN $LOGS_PARAM -v "$LOCAL_HOST_DNS_RESOLVER_FILE:/etc/resolv.conf:ro" -v "$SCRIPT_CWD/$bitping_data_folder/data$i/.bitpingd:/root/.bitpingd" --entrypoint /app/bitpingd bitping/bitpingd:latest); then
       echo "$CONTAINER_ID" | tee -a $containers_file
       echo "bitping$UNIQUE_ID$i" | tee -a $container_names_file
     else
