@@ -256,11 +256,7 @@ start_containers() {
          echo -e "${RED}Failed to start Ebesucher. Resolve or disable Ebesucher to continue. Exiting..${NOCOLOUR}"
          exit 1
       fi
-      if [ "$EBESUCHER_USE_CHROME" = true ]; then
-          ebesucher_port="-p $ebesucher_first_port:3000 "
-      else
-          ebesucher_port="-p $ebesucher_first_port:5800 "
-      fi
+      ebesucher_port="-p $ebesucher_first_port:5800 " # Always Firefox port
     fi
 
     if [[ $ADNADE_USERNAME ]]; then
@@ -377,74 +373,8 @@ start_containers() {
     fi
   fi
 
-  # Starting Ebesucher Chrome container
-  if [[ $EBESUCHER_USERNAME && "$EBESUCHER_USE_CHROME" = true ]]; then
-    if [ "$container_pulled" = false ]; then
-      sudo docker pull lscr.io/linuxserver/chromium:latest
-
-      # Exit, if chrome profile zip file is missing
-      if [ ! -f "$SCRIPT_CWD/$chrome_profile_zipfile" ];then
-        echo -e "${RED}Chrome profile file does not exist. Exiting..${NOCOLOUR}"
-        exit 1
-      fi
-
-      # Unzip the file
-      unzip -o "$SCRIPT_CWD/$chrome_profile_zipfile"
-
-      # Exit, if chrome profile data is missing
-      if [ ! -d "$SCRIPT_CWD/$chrome_profile_data" ];then
-        echo -e "${RED}Chrome Data folder does not exist. Exiting..${NOCOLOUR}"
-        exit 1
-      fi
-
-    fi
-
-    # Create folder and copy files
-    mkdir -p "$SCRIPT_CWD/$chrome_data_folder/data$i"
-    if [ "$cygpath_used" = false ]; then
-        sudo chown -R 911:911 "$SCRIPT_CWD/$chrome_profile_data"
-    else
-        if [[ "$ENABLE_LOGS" == true ]]; then
-            echo "Debug: Skipping chown command for Chrome profile data as cygpath was used (Windows environment detected)."
-        fi
-    fi
-    sudo cp -r "$SCRIPT_CWD/$chrome_profile_data" "$SCRIPT_CWD/$chrome_data_folder/data$i"
-    if [ "$cygpath_used" = false ]; then
-        sudo chown -R 911:911 "$SCRIPT_CWD/$chrome_data_folder/data$i"
-    else
-        if [[ "$ENABLE_LOGS" == true ]]; then
-            echo "Debug: Skipping chown command for Chrome data folder as cygpath was used (Windows environment detected)."
-        fi
-    fi
-
-    if [[ ! $proxy ]]; then
-      ebesucher_first_port=$(check_open_ports $ebesucher_first_port 1)
-      if ! expr "$ebesucher_first_port" : '[[:digit:]]*$' >/dev/null; then
-         echo -e "${RED}Problem assigning port $ebesucher_first_port ..${NOCOLOUR}"
-         echo -e "${RED}Failed to start Ebesucher. Resolve or disable Ebesucher to continue. Exiting..${NOCOLOUR}"
-         exit 1
-      fi
-      eb_port="-p $ebesucher_first_port:3000 "
-    fi
-
-    if CONTAINER_ID=$(sudo docker run -d --name ebesucher$UNIQUE_ID$i $LOGS_PARAM -v "$LOCAL_HOST_DNS_RESOLVER_FILE:/etc/resolv.conf:ro" $NETWORK_TUN --security-opt seccomp=unconfined -e TZ=Etc/UTC -e CHROME_CLI="https://www.ebesucher.com/surfbar/$EBESUCHER_USERNAME" -v "$SCRIPT_CWD/$chrome_data_folder/data$i/$chrome_profile_data:/config" --shm-size="1gb" $eb_port lscr.io/linuxserver/chromium:latest); then
-      echo "$CONTAINER_ID" | tee -a $containers_file
-      echo "ebesucher$UNIQUE_ID$i" | tee -a $container_names_file
-      echo "ebesucher$UNIQUE_ID$i" | tee -a $chrome_containers_file
-      echo "http://127.0.0.1:$ebesucher_first_port" |tee -a $ebesucher_file
-      ebesucher_first_port=`expr $ebesucher_first_port + 1`
-    else
-      echo -e "${RED}Failed to start container for Ebesucher. Exiting..${NOCOLOUR}"
-      exit 1
-    fi
-  else
-    if [[ "$container_pulled" == false && "$ENABLE_LOGS" == true ]]; then
-      echo -e "${RED}Ebesucher username for chrome is not configured. Ignoring Ebesucher..${NOCOLOUR}"
-    fi
-  fi
-
   # Starting Ebesucher container
-  if [[ $EBESUCHER_USERNAME && "$EBESUCHER_USE_CHROME" != true ]]; then
+  if [[ $EBESUCHER_USERNAME ]]; then
     echo -e "${GREEN}Starting Ebesucher container..${NOCOLOUR}"
     echo -e "${GREEN}Copy the following node url and paste in your browser if required..${NOCOLOUR}"
     echo -e "${GREEN}You will also find the urls in the file $ebesucher_file in the same folder${NOCOLOUR}"
@@ -898,7 +828,7 @@ start_containers() {
     if [ "$container_pulled" = false ]; then
       sudo docker pull $honeygain_image
     fi
-    if CONTAINER_ID=$(sudo docker run -d --name honey$UNIQUE_ID$i $NETWORK_TUN $LOGS_PARAM -v "$LOCAL_HOST_DNS_RESOLVER_FILE:/etc/resolv.conf:ro" --restart=always $honeygain_image -tou-accept -email $HONEYGAIN_EMAIL -pass $HONEYGAIN_PASSWORD -device $DEVICE_NAME$i); then
+    if CONTAINER_ID=$(sudo docker run -d --name honey$UNIQUE_ID$i $NETWORK_TUN $LOGS_PARAM -v "$LOCAL_HOST_DNS_RESOLVER_FILE:/etc/resolv.conf:ro" --restart=always $honeygain_image -tou-accept -email $HONEYGAIN_EMAIL -pass $HONEYGAIN_PASSWORD -device "$DEVICE_NAME$i"); then
       echo "$CONTAINER_ID" | tee -a $containers_file
       echo "honey$UNIQUE_ID$i" | tee -a $container_names_file
     else
@@ -1005,8 +935,13 @@ start_containers() {
     fi
     mkdir -p "$SCRIPT_CWD/$network3_data_folder/data$i"
     sudo chmod -R 777 "$SCRIPT_CWD/$network3_data_folder/data$i"
-    # DIAGNOSTIC: Temporarily removed --cap-add NET_ADMIN and --device /dev/net/tun for Network3 to debug 'custom device C' error.
-    if CONTAINER_ID=$(sudo docker run -d --name network3$UNIQUE_ID$i --restart=always $NETWORK_TUN $LOGS_PARAM -v "$LOCAL_HOST_DNS_RESOLVER_FILE:/etc/resolv.conf:ro" -v "$SCRIPT_CWD/$network3_data_folder/data$i:/usr/local/etc/wireguard" -e EMAIL=$NETWORK3_EMAIL aron666/network3-ai); then
+
+    local network3_device_opts=""
+    if [ "$cygpath_used" = false ]; then
+      network3_device_opts="--device /dev/net/tun:/dev/net/tun"
+    fi
+
+    if CONTAINER_ID=$(sudo docker run -d --name network3$UNIQUE_ID$i --restart=always $NETWORK_TUN $LOGS_PARAM --cap-add=NET_ADMIN $network3_device_opts -v "$LOCAL_HOST_DNS_RESOLVER_FILE:/etc/resolv.conf:ro" -v "$SCRIPT_CWD/$network3_data_folder/data$i:/usr/local/etc/wireguard" -e EMAIL=$NETWORK3_EMAIL aron666/network3-ai); then
       echo "$CONTAINER_ID" | tee -a $containers_file
       echo "network3$UNIQUE_ID$i" | tee -a $container_names_file
     else
@@ -1016,6 +951,40 @@ start_containers() {
   else
     if [[ "$container_pulled" == false && "$ENABLE_LOGS" == true ]]; then
       echo -e "${RED}Network3 Email is not configured. Ignoring Network3..${NOCOLOUR}"
+    fi
+  fi
+
+# IMPORTANT: Nodepay (Unofficial) Integration Notes:
+# 1. This service uses an unofficial Docker image (kellphy/nodepay).
+# 2. It requires a NODEPAY_COOKIE value in properties.conf.
+# 3. CRITICAL: This cookie/token expires approximately every 7 DAYS.
+#    You MUST manually refresh this token weekly by:
+#      a. Logging into https://app.nodepay.ai
+#      b. Opening browser developer tools -> Application/Storage -> Local Storage.
+#      c. Copying the value of 'np_webapp_token' or 'np_token'.
+#      d. Updating NODEPAY_COOKIE in properties.conf with this new value.
+#      e.After updating properties.conf, stop and remove the nodepay container (e.g. using Portainer or "docker rm -f <container_id>") and re-run the internetIncome.sh script or wait for the next run if using cron.
+#    Failure to refresh the token will cause Nodepay to stop working.
+# 4. A healthcheck is implemented to monitor the Nodepay container's Python process.
+  # Starting Nodepay container (Unofficial)
+  if [[ $NODEPAY_COOKIE ]]; then
+    echo -e "${GREEN}Starting Nodepay container (Unofficial - Requires weekly token refresh)...${NOCOLOUR}"
+    if [ "$container_pulled" = false ]; then
+      sudo docker pull kellphy/nodepay:latest
+    fi
+    # Note: The Kellphy image uses NP_COOKIE internally. We'll pass NODEPAY_COOKIE to it as NP_COOKIE.
+    if CONTAINER_ID=$(sudo docker run -d --name nodepay$UNIQUE_ID$i --restart unless-stopped --pull always $NETWORK_TUN $LOGS_PARAM -v "$LOCAL_HOST_DNS_RESOLVER_FILE:/etc/resolv.conf:ro" -e NP_COOKIE="$NODEPAY_COOKIE" --health-cmd 'pgrep -f "python3 main.py" || exit 1' --health-interval=1m --health-timeout=10s --health-retries=3 --health-start-period=30s kellphy/nodepay:latest); then
+      echo "$CONTAINER_ID" | tee -a $containers_file
+      echo "nodepay$UNIQUE_ID$i" | tee -a $container_names_file
+    else
+      echo -e "${RED}Failed to start container for Nodepay.${NOCOLOUR}"
+      # Consider if exiting is appropriate or just a warning. For now, mirror other critical failures.
+      # exit 1 # Let's comment this out for now, as it's unofficial. Failure here might not need to stop everything.
+      echo -e "${RED}Nodepay container failed to start. Continuing with other services...${NOCOLOUR}"
+    fi
+  else
+    if [[ "$container_pulled" == false && "$ENABLE_LOGS" == true ]]; then
+      echo -e "${RED}Nodepay Cookie is not configured. Ignoring Nodepay..${NOCOLOUR}"
     fi
   fi
 
@@ -1033,7 +1002,7 @@ start_containers() {
         exit 1
       fi
       sleep 5
-      sudo docker run --rm -it -v "$SCRIPT_CWD/$titan_data_folder/data$i:/root/.titanedge" nezha123/titan-edge bind --hash=$TITAN_HASH https://api-test1.container1.titannet.io/api/v2/device/binding
+      sudo docker run --rm -i -v "$SCRIPT_CWD/$titan_data_folder/data$i:/root/.titanedge" nezha123/titan-edge bind --hash=$TITAN_HASH https://api-test1.container1.titannet.io/api/v2/device/binding
       echo -e "${GREEN}The current script is designed to support only a single device for the Titan Network. Please create a new folder, download the InternetIncome script, and add the appropriate hash for the new device.${NOCOLOUR}"
     fi
   else
