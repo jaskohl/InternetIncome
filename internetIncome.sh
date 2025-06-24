@@ -154,51 +154,66 @@ start_containers() {
 
             local RAW_PWD="$PWD"
             echo "Debug: Initial RAW_PWD: '$RAW_PWD'"
-            local CURRENT_CWD="$RAW_PWD" # Default
+            local CURRENT_CWD # Will be set by cygpath or default to RAW_PWD
             local cygpath_used=false
 
             if command -v cygpath &> /dev/null; then
                 echo "Debug: cygpath is available."
-                local temp_win_path=$(cygpath -w "$RAW_PWD")
-                echo "Debug: Output of 'cygpath -w "$RAW_PWD"': '$temp_win_path'"
+                # Attempt to convert PWD to a Windows path and then to a mixed path.
+                # This is primarily for environments like Cygwin or MSYS on Windows.
+                local temp_win_path
+                temp_win_path=$(cygpath -w "$RAW_PWD" 2>/dev/null) # Suppress errors if PWD is not a Windows path
 
-                local temp_mixed_path=$(cygpath -m "$temp_win_path")
-                echo "Debug: Output of 'cygpath -m "$temp_win_path"': '$temp_mixed_path'"
+                if [ -n "$temp_win_path" ]; then
+                    local temp_mixed_path
+                    temp_mixed_path=$(cygpath -m "$temp_win_path" 2>/dev/null)
+                    echo "Debug: Output of 'cygpath -m \"$temp_win_path\"': '$temp_mixed_path'"
 
-                CURRENT_CWD="$temp_mixed_path"
-                cygpath_used=true
+                    if [ -n "$temp_mixed_path" ]; then
+                        # Validate if the path starts with a drive letter (Windows absolute) or a slash (POSIX absolute)
+                        if [[ "$temp_mixed_path" == [a-zA-Z]:/* || "$temp_mixed_path" == /* ]]; then
+                            CURRENT_CWD="$temp_mixed_path"
+                            cygpath_used=true
+                        else
+                            echo "Debug: 'cygpath -m' output '$temp_mixed_path' is not an absolute path. Falling back to RAW_PWD."
+                            CURRENT_CWD="$RAW_PWD"
+                        fi
+                    else
+                        echo "Debug: 'cygpath -m' produced empty or invalid output. Falling back to RAW_PWD."
+                        CURRENT_CWD="$RAW_PWD"
+                    fi
+                else
+                    echo "Debug: 'cygpath -w \"$RAW_PWD\"' produced empty or invalid output (likely not a Windows path). Falling back to RAW_PWD."
+                    CURRENT_CWD="$RAW_PWD"
+                fi
             else
-                echo "Debug: cygpath is NOT available."
+                echo "Debug: cygpath is NOT available. Using RAW_PWD."
+                CURRENT_CWD="$RAW_PWD"
             fi
             echo "Debug: CURRENT_CWD after cygpath block: '$CURRENT_CWD'"
 
-            # Only attempt global backslash to forward slash conversion if cygpath wasn't used
-            if [ "$cygpath_used" = false ]; then
-                echo "Debug: cygpath not used, attempting global backslash to forward slash replacement."
-                local temp_no_bslash="${CURRENT_CWD//\//}"
-                echo "Debug: CURRENT_CWD after backslash replacement (only if cygpath not used): '$temp_no_bslash'"
-                CURRENT_CWD="$temp_no_bslash"
-            else
-                # If cygpath was used, its output (temp_mixed_path) should already have forward slashes.
-                # The previous problematic line is now skipped if cygpath_used is true.
-                echo "Debug: cygpath was used, SKIPPING global backslash replacement. CURRENT_CWD is: '$CURRENT_CWD'"
+            # The global backslash replacement (which was removing all slashes) is removed.
+            # CURRENT_CWD should now be absolute, either from cygpath or directly from PWD.
+
+            # Trailing slash removal (still potentially useful, ensure it doesn't break root path "/")
+            if [[ "$CURRENT_CWD" == */ && "$CURRENT_CWD" != "/" ]]; then
+                CURRENT_CWD="${CURRENT_CWD%/}"
+                echo "Debug: CURRENT_CWD after removing trailing slash (if any): '$CURRENT_CWD'"
             fi
 
-            # Trailing slash removal
-            local temp_no_trailing_slash="$CURRENT_CWD"
-            if [[ "$temp_no_trailing_slash" == */ ]]; then
-                temp_no_trailing_slash="\${temp_no_trailing_slash%/}"
-                echo "Debug: CURRENT_CWD after removing trailing slash (if any): '$temp_no_trailing_slash'"
+            # Semicolon C removal (specific to some Cygwin/MSYS path conversions)
+            if [[ "$CURRENT_CWD" == *";C" ]]; then # This pattern seems specific to an old issue or cygwin artifact.
+                CURRENT_CWD="${CURRENT_CWD%;C}"
+                echo "Debug: CURRENT_CWD after removing ;C (if any): '$CURRENT_CWD'"
             fi
-            CURRENT_CWD="$temp_no_trailing_slash"
-
-            # Semicolon C removal
-            local temp_no_semicolon_c="$CURRENT_CWD"
-            if [[ "$temp_no_semicolon_c" == *";C" ]]; then
-                temp_no_semicolon_c="\${temp_no_semicolon_c%;C}"
-                echo "Debug: CURRENT_CWD after removing ;C (if any): '$temp_no_semicolon_c'"
+            
+            # Final check: Ensure SCRIPT_CWD is an absolute path.
+            # This is a safeguard. The logic above should generally maintain an absolute path.
+            # A POSIX path starts with '/', a Windows path with a drive letter like 'C:/'.
+            if ! [[ "$CURRENT_CWD" =~ ^/ || "$CURRENT_CWD" =~ ^[a-zA-Z]:/ ]]; then
+                echo "Warning: CURRENT_CWD ('$CURRENT_CWD') is not an absolute path after processing. Resetting to RAW_PWD ('$RAW_PWD')."
+                CURRENT_CWD="$RAW_PWD"
             fi
-            CURRENT_CWD="$temp_no_semicolon_c"
 
             local SCRIPT_CWD="$CURRENT_CWD"
             echo "Debug: Final SCRIPT_CWD is set to: '$SCRIPT_CWD'"
@@ -493,7 +508,7 @@ start_containers() {
     mkdir -p "$SCRIPT_CWD/$bitping_data_folder/data$i/.bitpingd"
     sudo chmod -R 777 "$SCRIPT_CWD/$bitping_data_folder/data$i/.bitpingd"
     if [ ! -f "$SCRIPT_CWD/$bitping_data_folder/data$i/.bitpingd/node.db" ]; then
-        MSYS_NO_PATHCONV=1 sudo docker run --rm $NETWORK_TUN -v "$LOCAL_HOST_DNS_RESOLVER_FILE:/etc/resolv.conf:ro" -v "$SCRIPT_CWD/$bitping_data_folder/data$i/.bitpingd:/root/.bitpingd" --entrypoint /app/bitpingd bitping/bitpingd:latest login --email $BITPING_EMAIL --password $BITPING_PASSWORD
+        MSYS_NO_PATHCONV=1 sudo docker run --rm $NETWORK_TUN -v "$LOCAL_HOST_DNS_RESOLVER_FILE:/etc/resolv.conf:ro" -v "$SCRIPT_CWD/$bitping_data_folder/data$i/.bitpingd:/root/.bitpingd" --entrypoint /app/bitpingd bitping/bitpingd:latest login --email "$BITPING_EMAIL" --password "$BITPING_PASSWORD"
     fi
     # echo "Running Bitping diagnostics (no -w flag) for container bitping$UNIQUE_ID$i..."
     # sudo docker run --rm --name bitping_diag_no_w$UNIQUE_ID$i $NETWORK_TUN $LOGS_PARAM -v "$LOCAL_HOST_DNS_RESOLVER_FILE:/etc/resolv.conf:ro" -v "$SCRIPT_CWD/$bitping_data_folder/data$i/.bitpingd:/root/.bitpingd" --entrypoint sh bitping/bitpingd:latest -c "echo '--- Diagnostic Info (No -w flag) Start ---'; echo 'Current PWD:'; pwd; echo 'Environment Variables:'; env; echo '--- Diagnostic Info (No -w flag) End ---'"
